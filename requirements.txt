@@ -1,0 +1,10 @@
+# Tested with Python 3.13 on: chromadb 1.5.9, streamlit 1.66.0, pandas 3.0.5, pypdf 5.9.0,
+# openpyxl 3.1.5, python-dotenv 1.2.3. Python 3.9-3.13 supported.
+chromadb>=1.0,<2
+pypdf>=5.0,<6
+pandas>=2.2,<4
+openpyxl>=3.1,<4
+streamlit>=1.40,<2
+python-dotenv>=1.0,<2
+# Claude backend (used when ANTHROPIC_API_KEY is set; otherwise the app runs in extractive mode):
+anthropic>=0.40.0
