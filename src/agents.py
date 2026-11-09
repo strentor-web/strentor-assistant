@@ -132,6 +132,8 @@ def validator(question: str, answer: str, chunks: list[dict], trace: dict | None
         except Exception:
             opinion = "unparseable"
         return {**lex, "method": "lexical support check (local-model judge advisory)", "judge_opinion": opinion}
+    if answer.startswith("- "):  # extractive-format answer (e.g. the model was unavailable): verify verbatim
+        return {**_extractive_grounding(answer, chunks), "method": "verbatim-sentence check"}
     try:
         out = llm(
             "You are a strict fact-checker. Decide if every claim in ANSWER is supported by CONTEXT, "

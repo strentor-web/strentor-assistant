@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import time
+import urllib.error
 import urllib.request
 from . import config
 from .guardrails import sanitize_context
@@ -64,23 +65,45 @@ def _openai_compat(system: str, user: str, max_tokens: int) -> str:
     req = urllib.request.Request(base.rstrip("/") + "/chat/completions", body,
                                  {"Content-Type": "application/json",
                                   "Authorization": "Bearer " + config.LLM_API_KEY})
-    with urllib.request.urlopen(req, timeout=60) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         return json.loads(r.read())["choices"][0]["message"]["content"].strip()
 
 
+_llm_down_until = 0.0  # circuit breaker: after a failed call, skip the model briefly so nothing hangs
+LLM_COOLDOWN_S = 120
+
+
+def reset_llm_breaker() -> None:
+    global _llm_down_until
+    _llm_down_until = 0.0
+
+
 def llm(system: str, user: str, max_tokens: int = 1024) -> str:
-    """LLM call with retry. Not used in extractive mode."""
+    """LLM call with retry. Not used in extractive mode.
+    Fails fast: a rejected request (bad key, unknown model) is not retried, and after one failed call the
+    model is skipped for LLM_COOLDOWN_S so every agent falls back to extractive mode instead of waiting."""
+    global _llm_down_until
     p = provider()
     fn = {"ollama": _ollama, "anthropic": _anthropic}.get(p) or (_openai_compat if p in config.OPENAI_COMPAT else None)
     if fn is None:
         raise RuntimeError("No LLM available (extractive mode).")
+    if time.time() < _llm_down_until:
+        raise RuntimeError(f"LLM temporarily skipped after a recent failure ({p})")
     last = None
     for attempt in range(3):
         try:
-            return fn(system, user, max_tokens)
+            out = fn(system, user, max_tokens)
+            _llm_down_until = 0.0
+            return out
+        except urllib.error.HTTPError as e:
+            last = e
+            if e.code in (400, 401, 403, 404):  # the request itself is wrong; retrying cannot help
+                break
+            time.sleep(2 ** attempt)
         except Exception as e:
             last = e
             time.sleep(2 ** attempt)
+    _llm_down_until = time.time() + LLM_COOLDOWN_S
     raise RuntimeError(f"LLM call failed ({p}): {last}")
 
 
