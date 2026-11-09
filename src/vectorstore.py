@@ -29,14 +29,40 @@ def set_embedding_function(ef) -> None:
     _col = _make_col()
 
 
+def _is_model_corruption(e: Exception) -> bool:
+    s = str(e)
+    return "INVALID_PROTOBUF" in s or "Protobuf parsing failed" in s or "onnx" in s.lower() and "load model" in s.lower()
+
+
+def _repair_model_cache() -> None:
+    """A half-finished download leaves a broken ONNX file in the cache. Delete it so it is fetched again."""
+    import shutil
+    from pathlib import Path
+    global _default_ef
+    _default_ef = None
+    try:
+        from chromadb.utils.embedding_functions.onnx_mini_lm_l6_v2 import ONNXMiniLM_L6_V2
+        cache = Path(ONNXMiniLM_L6_V2.DOWNLOAD_PATH)
+    except Exception:
+        cache = Path.home() / ".cache" / "chroma" / "onnx_models" / "all-MiniLM-L6-v2"
+    shutil.rmtree(cache, ignore_errors=True)
+
+
 def add_chunks(chunks: list[dict], visibility: str = "internal") -> int:
     """visibility: 'public' (client-safe) or 'internal' (team only)."""
     ids = [hashlib.md5(f"{c['source']}|{c['page']}|{c['text']}".encode()).hexdigest() for c in chunks]
-    _col.upsert(
+    kwargs = dict(
         ids=ids,
         documents=[c["text"] for c in chunks],
         metadatas=[{"source": c["source"], "page": c["page"], "visibility": visibility} for c in chunks],
     )
+    try:
+        _col.upsert(**kwargs)
+    except Exception as e:
+        if not _is_model_corruption(e):
+            raise
+        _repair_model_cache()  # corrupt cached model: remove it, download again, retry once
+        _col.upsert(**kwargs)
     return len(chunks)
 
 
