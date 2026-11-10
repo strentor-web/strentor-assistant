@@ -36,9 +36,14 @@ def _rule_plan(question: str) -> list[str]:
     return subs[:4]
 
 
+def _economy() -> bool:
+    """Hosted free-tier model: spend the quota on the answer only."""
+    return config.LLM_ECONOMY and provider() in config.OPENAI_COMPAT
+
+
 def planner(question: str) -> list[str]:
     """Agent 1 (Plan): break the question into 1-3 retrieval sub-queries."""
-    if provider() == "extractive":
+    if provider() == "extractive" or _economy():
         return _rule_plan(question)
     try:
         out = llm(
@@ -122,6 +127,8 @@ def validator(question: str, answer: str, chunks: list[dict], trace: dict | None
     if provider() == "extractive":
         return {**_extractive_grounding(answer, chunks), "method": "verbatim-sentence check"}
     ctx = "\n\n".join(c["text"] for c in chunks)
+    if _economy():
+        return {**_lexical_grounding(answer, chunks), "method": "lexical support check (economy mode: 1 model call per question)"}
     if provider() == "ollama":
         lex = _lexical_grounding(answer, chunks)
         opinion = "not asked"

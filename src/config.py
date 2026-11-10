@@ -24,7 +24,18 @@ OLLAMA_NUM_CTX = int(os.getenv("OLLAMA_NUM_CTX", "8192"))
 API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-5-5")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
+# Free hosted models have small quotas: with LLM_ECONOMY=1 (default) a question makes ONE model call (the answer);
+# planning is rule-based and the grounding check is lexical. Set LLM_ECONOMY=0 for the full three-call pipeline.
+LLM_ECONOMY = os.getenv("LLM_ECONOMY", "1") == "1"
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
+# Models tried in order when one is out of quota or unknown (names change; override with LLM_MODELS="a,b,c").
+LLM_MODELS = [m.strip() for m in os.getenv("LLM_MODELS", "").split(",") if m.strip()]
+MODEL_CHAINS = {
+    "gemini": ["gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite",
+               "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-3-flash"],  # families with free quota on the owner's key
+    "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+    "openai": [],
+}
 OPENAI_COMPAT = {  # provider -> (base URL, default model); override the model with LLM_MODEL
     "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.8-flash"),
     "groq": ("https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),

@@ -115,7 +115,7 @@ Without the last two lines the app runs in extractive mode (no model).
 1. Gemini: sign in at aistudio.google.com, click **Get API key > Create API key**. Groq: create a key at console.groq.com and use `LLM_PROVIDER = "groq"`.
 2. Add the key as in B. The default Gemini model is `gemini-3.8-flash` (the model named in Google's OpenAI-compatibility documentation when this was written); if the provider rejects it, set `LLM_MODEL` to a current model name from Google AI Studio.
 3. The sidebar then shows "LLM: Gemini (free API tier)". Any other OpenAI-compatible service works with `LLM_PROVIDER=openai`, `LLM_BASE_URL` and `LLM_MODEL`. Paid Claude works with `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` and `pip install anthropic` (the only backend that needs an extra package; Ollama, Gemini and Groq need none).
-4. Free tiers are rate-limited (about 10 requests a minute as far as I know), and Google may use free-tier prompts to improve its products; that is acceptable because the knowledge base is public content. `MAX_QUESTIONS_PER_SESSION` (default 40) limits use per visitor.
+4. **Economy mode (default, `LLM_ECONOMY=1`):** a question makes one model call, the answer; planning is rule-based and the grounding check is lexical, so a small free quota lasts three times longer. Set `LLM_ECONOMY=0` for the full three-call pipeline. **Automatic model switching:** the app holds a list of models per provider (`LLM_MODELS="a,b,c"` overrides it; a single `LLM_MODEL` goes first). If a model answers `429 quota exceeded` or is unknown (404), the next one is used at once and the bad one is skipped for a while (2 minutes for a quota error, 1 hour for an unknown name). A rejected key stops the chain. The trace shows which `model` answered, and if every model fails, team mode shows each model's error above the answer. The built-in Gemini list names model families (3.8, 3.6, 3.1 Flash-Lite, 3.5 Flash-Lite, 2.5 Flash, 2.5 Flash-Lite, 3 Flash), taken from the owner's AI Studio **Rate Limit** page. At run time the app asks Google which model IDs the key can use (`/models`, cached for an hour), maps each family to the real ID (for example one ending in `-preview`), skips image/audio variants and drops names the key cannot use. A model that reports a per-day quota is skipped for an hour. Other keys can differ; set `LLM_MODELS` to override. Free tiers are rate-limited (about 10 requests a minute as far as I know), and Google may use free-tier prompts to improve its products; that is acceptable because the knowledge base is public content. `MAX_QUESTIONS_PER_SESSION` (default 40) limits use per visitor.
 
 **D. What happens when the model is unavailable.** If the quota is used up, the key is wrong or the network fails, the Reasoner falls back to extractive mode, so the visitor still gets a cited answer and never a crash. The grounding checks and refusals apply in every mode.
 
@@ -142,7 +142,7 @@ Other settings (chunk size, top-k, limits) are in `src/config.py`. Tested versio
 | Safety | `src/guardrails.py` | Question validation, injection filter, medical detection |
 | Leads | `src/leads.py` | Validation, consent, pathway suggestion, CSV upsert |
 | Brand | `src/theme.py`, `.streamlit/config.toml` | STRENTOR look from strentor.com: near-black `#0A0A0A`, gold `#C99C53`, off-white `#ECE8DF`, Satoshi font, official logo bundled in `assets/` |
-| Quality | `src/selftest.py`, `tests/` | Live self-test (14 checks), automated tests (47) |
+| Quality | `src/selftest.py`, `tests/` | Live self-test (14 checks), automated tests (50) |
 
 ## 6. Workflow
 
@@ -217,7 +217,7 @@ The sidebar form asks for name, email, optional phone, country and what the pers
 
 **Evidence of generated, cited answers.** Two screenshots from a real run with a local Ollama model (llama3.2:3b) are in section 4 ("Evidence from a real run"): a fluent answer with its source citation and agent trace, and a refusal when the knowledge base does not support an answer. The image files are in `docs/screenshots/`.
 
-- **Automated tests (47):** `python -m unittest discover -s tests -v` (37 logic tests in `test_core.py`, 10 headless UI tests in `test_ui.py` using Streamlit AppTest). They cover loosely worded questions (typos, slang, paraphrase), all four file formats, Excel sheet and PDF page labels, bad files, chunk bounds and overlap, guardrails, lead rules, audience isolation, the planner, validator rejection of an invented sentence, tool-call trace, medical, blocked and out-of-scope routes, the self-test, and the UI (example questions, back-to-examples button, team-password gate, lead form, self-test, sample loading). They run offline using a stand-in word-hash embedding and extractive mode, so no model download or key is needed.
+- **Automated tests (50):** `python -m unittest discover -s tests -v` (40 logic tests in `test_core.py`, 10 headless UI tests in `test_ui.py` using Streamlit AppTest). They cover loosely worded questions (typos, slang, paraphrase), all four file formats, Excel sheet and PDF page labels, bad files, chunk bounds and overlap, guardrails, lead rules, audience isolation, the planner, validator rejection of an invented sentence, tool-call trace, medical, blocked and out-of-scope routes, the self-test, and the UI (example questions, back-to-examples button, team-password gate, lead form, self-test, sample loading). They run offline using a stand-in word-hash embedding and extractive mode, so no model download or key is needed.
 - **Live self-test (14 checks):** team mode > Self-test tab. Runs against the real embedding model, vector store and agents.
 - **Manual script:** `SAMPLE_QUESTIONS.md` lists questions per sample file with expected results.
 - **Not covered by automated tests:** live Ollama, Claude, Gemini and Groq backends (they need a model or key; the Gemini/Groq request format is tested against a local mock server), and answer quality with real embeddings beyond the self-test's in-scope question.
@@ -276,7 +276,7 @@ Written in my own words, in the order I hit them.
 
 **2. Working without an AI key.** An evaluator might have no API key and no local model, and a project that only runs with one would fail on first contact. I built an "extractive" mode where the same four agents run without a model: a rule-based planner, sentence selection, and a real grounding check (every answer sentence must appear word for word in the sources). The first results were poor. The assistant returned the FAQ question line instead of its answer, markdown symbols leaked in, and PDF line breaks cut sentences in half. I fixed these one by one: show the answer under the matched question, weight the question's key noun, strip markdown, drop weak matches, and re-join wrapped PDF lines.
 
-**3. Testing a system that downloads a model.** The embedding model has to be downloaded once, and my build environment blocked that download. I tested with a small stand-in embedding (word hashing) so all 47 tests run offline, and I put checks against the real model into the in-app Self-test. Once deployed, I confirmed the real model on the live app: answers are grounded and the Self-test passes. The evaluator can re-run the Self-test in one click.
+**3. Testing a system that downloads a model.** The embedding model has to be downloaded once, and my build environment blocked that download. I tested with a small stand-in embedding (word hashing) so all 50 tests run offline, and I put checks against the real model into the in-app Self-test. Once deployed, I confirmed the real model on the live app: answers are grounded and the Self-test passes. The evaluator can re-run the Self-test in one click.
 
 **4. Spreadsheets in a text search.** CSV and Excel rows mean little as plain text. I turned each row into `column: value` pairs, grouped 20 rows per chunk, and kept the sheet name so the citation reads `Regions:1`.
 
@@ -312,6 +312,12 @@ Written in my own words, in the order I hit them.
 
 **20. A silent fallback hid a failing model.** On the live app the sidebar said Gemini, yet answers looked like extractive bullets. The model call was failing and the safe fallback (see 18) was working so quietly that nothing showed it. The trace now records `answer_mode` (generated, extractive, or extractive-fallback) and `llm_error` with the provider's own message, and team mode shows a warning above the answer. A test checks that a fallback is reported. Related change: re-ingesting a file replaces its old chunks, so an old persisted index cannot leave stale text behind. (I also tried splitting the knowledge base by topic; it scored lower on the held-out set, so I reverted it.)
 
+**21. Free quota used up three times too fast.** The live app answered with Gemini's `429 You exceeded your current quota`. Each question made three model calls (plan, answer, validate), and the Self-test and my own checks made more. With a hosted free model the app now runs in economy mode: one call per question, rule-based planning, a lexical grounding check, and no retries on a 429. A test checks that one question costs exactly one request. Limit: the validator in this mode is a word-support check, weaker than a model judge, and the answer and its sources still pass the same guardrails.
+
+**22. One model's quota should not end the answer.** Gemini's free quota is per model, so when one model returned 429 the app fell back to extractive mode even though another model had quota. The hosted-model call now walks a chain of models, switching at once on a 429 or an unknown model, remembering which are cooling down, and reporting which model answered. A test uses a mock server where the first model is over quota and checks the second answers and the first is then skipped.
+
+**23. Model IDs differ from display names.** AI Studio shows names like "Gemini 3.6 Flash", while the API ID can carry a suffix. Hard-coding IDs would fail silently on 404. The app now lists the key's real model IDs, maps family names to them and drops unknown ones; a test with a mock server checks the mapping, including skipping an image variant.
+
 ## 15. Requirement coverage
 
 All ten capstone tasks are mapped to files and one-minute checks in [`TASK_MAP.md`](TASK_MAP.md). Submission requirements: complete source code and this documentation (setup, architecture, agent roles, deployment steps, limitations, challenges) are included in the zip.
@@ -334,4 +340,4 @@ All ten capstone tasks are mapped to files and one-minute checks in [`TASK_MAP.m
 
 **What would you improve first?** Connect a real language model and move leads to a database.
 
-**How do you know it works?** 47 automated tests, a 14-check live self-test, and a manual question script, all runnable by the marker in minutes.
+**How do you know it works?** 50 automated tests, a 14-check live self-test, and a manual question script, all runnable by the marker in minutes.

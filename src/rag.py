@@ -54,11 +54,52 @@ def _anthropic(system: str, user: str, max_tokens: int) -> str:
     return r.content[0].text.strip()
 
 
-def _openai_compat(system: str, user: str, max_tokens: int) -> str:
+_available = {"at": 0.0, "ids": []}
+_SKIP_WORDS = ("image", "tts", "live", "audio", "native", "embedding", "robotics", "computer", "aqa", "veo", "imagen")
+
+
+def _list_models() -> list:
+    """Ask the provider which model IDs this key can really use (cached for an hour). [] if it cannot say."""
+    if time.time() - _available["at"] < 3600:
+        return _available["ids"]
+    ids = []
+    try:
+        base = config.LLM_BASE_URL or config.OPENAI_COMPAT[provider()][0]
+        req = urllib.request.Request(base.rstrip("/") + "/models", headers={"Authorization": "Bearer " + config.LLM_API_KEY})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            ids = [str(m.get("id", "")).replace("models/", "") for m in json.loads(r.read()).get("data", [])]
+    except Exception:
+        ids = []
+    _available.update(at=time.time(), ids=ids)
+    return ids
+
+
+def _resolve(name: str, ids: list) -> str:
+    """Map a family name ('gemini-3.6-flash') to the real ID the provider lists ('...-preview' etc.)."""
+    if not ids or name in ids:
+        return name
+    cands = [i for i in ids if i.startswith(name + "-") and not any(w in i for w in _SKIP_WORDS)]
+    return min(cands, key=len) if cands else ""
+
+
+def _models() -> list:
+    """Models to try, best first: LLM_MODELS, else LLM_MODEL (if set) followed by the provider's default chain."""
+    p = provider()
+    explicit = list(config.LLM_MODELS)
+    if not explicit and config.LLM_MODEL != "claude-sonnet-5-5":
+        explicit = [config.LLM_MODEL]
+    out = []
+    for m in explicit + config.MODEL_CHAINS.get(p, []):
+        if m not in out:
+            out.append(m)
+    ids = _list_models()
+    resolved = [r for r in (_resolve(m, ids) for m in out) if r]  # drop names this key cannot use
+    return resolved or out or [config.OPENAI_COMPAT[p][1]]
+
+
+def _openai_compat(system: str, user: str, max_tokens: int, model: str) -> str:
     """Any OpenAI-compatible chat API (Gemini and Groq have free tiers). Standard library only."""
-    base, default_model = config.OPENAI_COMPAT[provider()]
-    base = config.LLM_BASE_URL or base
-    model = config.LLM_MODEL if config.LLM_MODEL != "claude-sonnet-5-5" else default_model
+    base = config.LLM_BASE_URL or config.OPENAI_COMPAT[provider()][0]
     body = json.dumps({"model": model, "max_tokens": max_tokens, "temperature": 0.1,
                        "messages": [{"role": "system", "content": system},
                                     {"role": "user", "content": user}]}).encode()
@@ -69,21 +110,63 @@ def _openai_compat(system: str, user: str, max_tokens: int) -> str:
         return json.loads(r.read())["choices"][0]["message"]["content"].strip()
 
 
-status = {"error": "", "fallback": False}  # what happened on the model during the current question
+status = {"error": "", "fallback": False, "model": ""}  # what happened on the model during the current question
 _last_error = ""
+_llm_down_until = 0.0  # circuit breaker: after a failed call, skip the model briefly so nothing hangs
+LLM_COOLDOWN_S = 120
+_model_down = {}  # model -> time until which it is skipped (quota used up or unknown model)
 
 
 def reset_status() -> None:
-    status["error"], status["fallback"] = "", False
-
-
-_llm_down_until = 0.0  # circuit breaker: after a failed call, skip the model briefly so nothing hangs
-LLM_COOLDOWN_S = 120
+    status["error"], status["fallback"], status["model"] = "", False, ""
 
 
 def reset_llm_breaker() -> None:
     global _llm_down_until
     _llm_down_until = 0.0
+    _model_down.clear()
+    _available.update(at=0.0, ids=[])
+
+
+def _http_detail(e) -> str:
+    try:
+        return f"HTTP {e.code} {e.reason}: {e.read().decode('utf-8', 'replace')[:400]}"
+    except Exception:
+        return f"HTTP {e.code} {e.reason}"
+
+
+def _llm_chain(system: str, user: str, max_tokens: int) -> str:
+    """Hosted OpenAI-compatible model with automatic switching: if a model is over quota (429) or unknown
+    (404/400) the next one in the chain is used straight away, and the bad one is skipped for a while."""
+    global _llm_down_until, _last_error
+    now, errors = time.time(), []
+    for model in _models():
+        if _model_down.get(model, 0) > now:
+            continue
+        for attempt in range(2):
+            try:
+                out = _openai_compat(system, user, max_tokens, model)
+                status["model"], _llm_down_until = model, 0.0
+                return out
+            except urllib.error.HTTPError as e:
+                errors.append(f"{model}: {_http_detail(e)}")
+                if e.code in (401, 403):  # the key itself is rejected: no other model will accept it
+                    _last_error = "; ".join(errors)
+                    _llm_down_until = time.time() + LLM_COOLDOWN_S
+                    status["error"] = _last_error
+                    raise RuntimeError(f"LLM call failed ({_last_error})")
+                if e.code in (400, 404, 429):
+                    daily = e.code == 429 and re.search(r"perday|per day|daily", errors[-1].lower())
+                    _model_down[model] = time.time() + (3600 if e.code in (400, 404) or daily else 120)
+                    break  # next model
+                time.sleep(1)
+            except Exception as e:
+                errors.append(f"{model}: {e}")
+                time.sleep(1)
+    _last_error = "; ".join(errors)[:500] or "every model in the chain is cooling down"
+    _llm_down_until = time.time() + 30
+    status["error"] = _last_error
+    raise RuntimeError(f"LLM call failed ({_last_error})")
 
 
 def llm(system: str, user: str, max_tokens: int = 1024) -> str:
@@ -92,7 +175,12 @@ def llm(system: str, user: str, max_tokens: int = 1024) -> str:
     model is skipped for LLM_COOLDOWN_S so every agent falls back to extractive mode instead of waiting."""
     global _llm_down_until, _last_error
     p = provider()
-    fn = {"ollama": _ollama, "anthropic": _anthropic}.get(p) or (_openai_compat if p in config.OPENAI_COMPAT else None)
+    if p in config.OPENAI_COMPAT:
+        if time.time() < _llm_down_until:
+            status["error"] = _last_error
+            raise RuntimeError(f"LLM temporarily skipped after a recent failure ({p}): {_last_error}")
+        return _llm_chain(system, user, max_tokens)
+    fn = {"ollama": _ollama, "anthropic": _anthropic}.get(p)
     if fn is None:
         raise RuntimeError("No LLM available (extractive mode).")
     if time.time() < _llm_down_until:
@@ -106,7 +194,7 @@ def llm(system: str, user: str, max_tokens: int = 1024) -> str:
             return out
         except urllib.error.HTTPError as e:
             last = e
-            if e.code in (400, 401, 403, 404):  # the request itself is wrong; retrying cannot help
+            if e.code in (400, 401, 403, 404, 429):  # wrong request or quota used up; retrying only burns more quota
                 break
             time.sleep(2 ** attempt)
         except Exception as e:

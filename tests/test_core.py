@@ -311,7 +311,7 @@ class TestOpenAICompatibleBackend(unittest.TestCase):
         self.assertIn("12 weeks", r["answer"])
         self.assertTrue(r["sources"])
         self.assertTrue(r["trace"]["answer_mode"].startswith("extractive-fallback"))  # the fallback is visible, not silent
-        self.assertIn("groq", r["trace"]["llm_error"])
+        self.assertIn("llama-3.3-70b-versatile", r["trace"]["llm_error"])  # names the model that failed
         rag.reset_llm_breaker()
 
 
@@ -417,3 +417,108 @@ class TestReingestReplacesStaleContent(unittest.TestCase):
         texts = vs._col.get(where={"source": "stale_test.txt"})["documents"]
         self.assertEqual(texts, ["new pricing text version two"])
         vs._col.delete(where={"source": "stale_test.txt"})
+
+
+class TestEconomyMode(unittest.TestCase):
+    def test_hosted_model_is_called_once_per_question(self):
+        import json, threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from src import rag
+        rag.reset_llm_breaker()
+        hits = []
+
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                hits.append(1)
+                out = json.dumps({"choices": [{"message": {"content":
+                    "The STRENTOR Flagship programme runs for 12 weeks. [strentor_public.md, 1]"}}]}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = (config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL)
+        config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL = "gemini", "k", f"http://127.0.0.1:{srv.server_port}"
+        try:
+            r = service.ask("How long is the Flagship programme?", "client")
+        finally:
+            config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL = old
+            srv.shutdown()
+            rag.reset_llm_breaker()
+        self.assertEqual(len(hits), 1)                      # plan and validation cost no model calls
+        self.assertEqual(r["trace"]["answer_mode"], "generated")
+        self.assertIn("12 weeks", r["answer"])
+
+
+class TestModelSwitching(unittest.TestCase):
+    def test_switches_to_next_model_when_one_is_over_quota_and_remembers_it(self):
+        import json, threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from src import rag
+        rag.reset_llm_breaker()
+        asked = []
+
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                model = json.loads(self.rfile.read(int(self.headers["Content-Length"])))["model"]
+                asked.append(model)
+                if model == "model-a":
+                    self.send_response(429); self.send_header("Content-Length", "0"); self.end_headers(); return
+                out = json.dumps({"choices": [{"message": {"content": "ok from " + model}}]}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = (config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, config.LLM_MODELS, dict(config.MODEL_CHAINS))
+        config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL = "gemini", "k", f"http://127.0.0.1:{srv.server_port}"
+        config.LLM_MODELS, config.MODEL_CHAINS["gemini"] = ["model-a", "model-b"], []
+        try:
+            self.assertEqual(rag.llm("s", "u"), "ok from model-b")
+            self.assertEqual(asked, ["model-a", "model-b"])      # a is over quota: switched at once
+            self.assertEqual(rag.llm("s", "u"), "ok from model-b")
+            self.assertEqual(asked, ["model-a", "model-b", "model-b"])  # a is skipped while it cools down
+            self.assertEqual(rag.status["model"], "model-b")
+        finally:
+            config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, config.LLM_MODELS = old[:4]
+            config.MODEL_CHAINS.update(old[4])
+            srv.shutdown()
+            rag.reset_llm_breaker()
+
+
+class TestModelDiscovery(unittest.TestCase):
+    def test_family_names_resolve_to_real_ids_and_unusable_names_are_dropped(self):
+        import json, threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from src import rag
+        rag.reset_llm_breaker()
+
+        class H(BaseHTTPRequestHandler):
+            def do_GET(self):
+                out = json.dumps({"data": [{"id": "models/gemini-3.6-flash-image"}, {"id": "models/gemini-3.6-flash-preview"},
+                                           {"id": "models/gemini-2.5-flash"}, {"id": "models/gemini-2.5-flash-lite"}]}).encode()
+                self.send_response(200); self.send_header("Content-Length", str(len(out))); self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        old = (config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, config.LLM_MODELS, list(config.MODEL_CHAINS["gemini"]))
+        config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL = "gemini", "k", f"http://127.0.0.1:{srv.server_port}/v1"
+        config.LLM_MODELS, config.MODEL_CHAINS["gemini"] = ["gemini-3.6-flash", "gemini-9-flash", "gemini-2.5-flash"], []
+        try:
+            self.assertEqual(rag._models(), ["gemini-3.6-flash-preview", "gemini-2.5-flash"])  # image variant skipped, unknown dropped
+        finally:
+            config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, config.LLM_MODELS = old[:4]
+            config.MODEL_CHAINS["gemini"] = old[4]
+            srv.shutdown()
+            rag.reset_llm_breaker()
