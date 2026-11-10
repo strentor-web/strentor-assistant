@@ -24,7 +24,7 @@ CANONICAL = [
     (r"\b(sg|singapore\w*)\b", "Singapore"),
     (r"\b(indian?|rupees?|inr|mumbai|delhi|bangalore|bengaluru|chennai|hyderabad|pune)\b", "India"),
     (r"\b(abroad|overseas|outside india|other countries|worldwide|international|global)\b", "countries international"),
-    (r"\b(company|companies|business|businesses|organi[sz]ations?|office|workplace|employees?|staff|hr|csr|ngo|b2b|institution\w*|school|college|university|team building)\b",
+    (r"\b(corporate|corporates|enterprise|company|companies|business|businesses|organi[sz]ations?|office|workplace|employees?|staff|hr|csr|ngo|b2b|institution\w*|school|college|university|team building)\b",
      "corporate institutional programmes"),
     (r"\b(online|remote|virtual|zoom|video( call)?|from home|distance)\b", "Trainer-Led Self-Paced online"),
     (r"\b(in person|in-person|gym|offline|face to face)\b", "Trainer-Led live"),
@@ -87,6 +87,11 @@ def canonical_terms(q: str) -> list:
         if re.search(pat, low) and canon not in seen:
             seen.add(canon)
             terms.append(canon)
+    generic = "Flagship programme coaching"
+    if generic in terms and len(terms) > 1:  # a specific offer was named: do not also pull in generic Flagship text
+        specific = {"corporate institutional programmes", "Strategy Session", "Circle", "Assessment pathway", "no longer sold retired"}
+        if specific & set(terms):
+            terms.remove(generic)
     return terms
 
 

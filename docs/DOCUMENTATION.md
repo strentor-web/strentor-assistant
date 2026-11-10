@@ -70,7 +70,8 @@ The app opens at http://localhost:8501.
 | Variable | Meaning | Default |
 |---|---|---|
 | `TEAM_PASSWORD` | Unlocks team mode. Empty disables it | `evaluator` |
-| `LLM_PROVIDER` | `auto` (Ollama, else Claude if key set, else extractive), `ollama`, `anthropic`, `extractive` | `auto` |
+| `LLM_PROVIDER` | `auto` (Ollama if running, else Claude if `ANTHROPIC_API_KEY` is set, else extractive), `ollama`, `anthropic`, `gemini`, `groq`, `openai`, `extractive`. Gemini and Groq are never chosen by `auto`; set them explicitly | `auto` |
+| `LLM_API_KEY` | Key for `gemini`, `groq` or `openai` (free keys exist for Gemini and Groq) | empty |
 | `ANTHROPIC_API_KEY` | Enables the Claude backend (also `pip install anthropic`) | empty |
 | `OLLAMA_MODEL` | Local model name | `llama3.2:3b` |
 
@@ -112,8 +113,8 @@ Without the last two lines the app runs in extractive mode (no model).
 
 **C. Free AI model (no card).** Google Gemini and Groq both give free API keys.
 1. Gemini: sign in at aistudio.google.com, click **Get API key > Create API key**. Groq: create a key at console.groq.com and use `LLM_PROVIDER = "groq"`.
-2. Add the key as in B. If the provider rejects the default model name, also set `LLM_MODEL` to a model name from the provider's list.
-3. The sidebar then shows "LLM: Gemini (free API tier)". Any other OpenAI-compatible service works with `LLM_PROVIDER=openai`, `LLM_BASE_URL` and `LLM_MODEL`. Paid Claude works with `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`.
+2. Add the key as in B. The default Gemini model is `gemini-3.8-flash` (the model named in Google's OpenAI-compatibility documentation when this was written); if the provider rejects it, set `LLM_MODEL` to a current model name from Google AI Studio.
+3. The sidebar then shows "LLM: Gemini (free API tier)". Any other OpenAI-compatible service works with `LLM_PROVIDER=openai`, `LLM_BASE_URL` and `LLM_MODEL`. Paid Claude works with `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY` and `pip install anthropic` (the only backend that needs an extra package; Ollama, Gemini and Groq need none).
 4. Free tiers are rate-limited (about 10 requests a minute as far as I know), and Google may use free-tier prompts to improve its products; that is acceptable because the knowledge base is public content. `MAX_QUESTIONS_PER_SESSION` (default 40) limits use per visitor.
 
 **D. What happens when the model is unavailable.** If the quota is used up, the key is wrong or the network fails, the Reasoner falls back to extractive mode, so the visitor still gets a cited answer and never a crash. The grounding checks and refusals apply in every mode.
@@ -141,7 +142,7 @@ Other settings (chunk size, top-k, limits) are in `src/config.py`. Tested versio
 | Safety | `src/guardrails.py` | Question validation, injection filter, medical detection |
 | Leads | `src/leads.py` | Validation, consent, pathway suggestion, CSV upsert |
 | Brand | `src/theme.py`, `.streamlit/config.toml` | STRENTOR look from strentor.com: near-black `#0A0A0A`, gold `#C99C53`, off-white `#ECE8DF`, Satoshi font, official logo bundled in `assets/` |
-| Quality | `src/selftest.py`, `tests/` | Live self-test (14 checks), automated tests (41) |
+| Quality | `src/selftest.py`, `tests/` | Live self-test (14 checks), automated tests (47) |
 
 ## 6. Workflow
 
@@ -191,7 +192,7 @@ Control flow: Validator fails, then the Reasoner retries once with the issue app
 
 **Why four.** Each agent has one responsibility, so each can be tested and explained separately, and the Validator is independent of the writer. Checking your own work is weak; a separate check is stronger.
 
-**AI model options.** Local Ollama, Anthropic Claude (needs a key), or none. With `LLM_PROVIDER=auto` the app uses Ollama if present, else Claude if a key is set, else extractive mode.
+**AI model options.** Local Ollama (free, used for the screenshots in section 4), a free Gemini or Groq key (used for the hosted app, which cannot run Ollama), Anthropic Claude (paid), or none. Ollama stays fully supported: on a computer where Ollama is running, `LLM_PROVIDER=auto` (the default) or `ollama` uses it. The screenshots remain valid evidence of the Ollama path, and the same four agents and grounding rules run on every backend.
 
 ## 8. Leads
 
@@ -216,10 +217,10 @@ The sidebar form asks for name, email, optional phone, country and what the pers
 
 **Evidence of generated, cited answers.** Two screenshots from a real run with a local Ollama model (llama3.2:3b) are in section 4 ("Evidence from a real run"): a fluent answer with its source citation and agent trace, and a refusal when the knowledge base does not support an answer. The image files are in `docs/screenshots/`.
 
-- **Automated tests (41):** `python -m unittest discover -s tests -v` (31 logic tests in `test_core.py`, 10 headless UI tests in `test_ui.py` using Streamlit AppTest). They cover loosely worded questions (typos, slang, paraphrase), all four file formats, Excel sheet and PDF page labels, bad files, chunk bounds and overlap, guardrails, lead rules, audience isolation, the planner, validator rejection of an invented sentence, tool-call trace, medical, blocked and out-of-scope routes, the self-test, and the UI (example questions, back-to-examples button, team-password gate, lead form, self-test, sample loading). They run offline using a stand-in word-hash embedding and extractive mode, so no model download or key is needed.
+- **Automated tests (47):** `python -m unittest discover -s tests -v` (37 logic tests in `test_core.py`, 10 headless UI tests in `test_ui.py` using Streamlit AppTest). They cover loosely worded questions (typos, slang, paraphrase), all four file formats, Excel sheet and PDF page labels, bad files, chunk bounds and overlap, guardrails, lead rules, audience isolation, the planner, validator rejection of an invented sentence, tool-call trace, medical, blocked and out-of-scope routes, the self-test, and the UI (example questions, back-to-examples button, team-password gate, lead form, self-test, sample loading). They run offline using a stand-in word-hash embedding and extractive mode, so no model download or key is needed.
 - **Live self-test (14 checks):** team mode > Self-test tab. Runs against the real embedding model, vector store and agents.
 - **Manual script:** `SAMPLE_QUESTIONS.md` lists questions per sample file with expected results.
-- **Not covered by automated tests:** live Ollama and Claude backends (they need a model or key), and answer quality with real embeddings beyond the self-test's in-scope question.
+- **Not covered by automated tests:** live Ollama, Claude, Gemini and Groq backends (they need a model or key; the Gemini/Groq request format is tested against a local mock server), and answer quality with real embeddings beyond the self-test's in-scope question.
 
 ## 11. Deployment steps
 
@@ -275,7 +276,7 @@ Written in my own words, in the order I hit them.
 
 **2. Working without an AI key.** An evaluator might have no API key and no local model, and a project that only runs with one would fail on first contact. I built an "extractive" mode where the same four agents run without a model: a rule-based planner, sentence selection, and a real grounding check (every answer sentence must appear word for word in the sources). The first results were poor. The assistant returned the FAQ question line instead of its answer, markdown symbols leaked in, and PDF line breaks cut sentences in half. I fixed these one by one: show the answer under the matched question, weight the question's key noun, strip markdown, drop weak matches, and re-join wrapped PDF lines.
 
-**3. Testing a system that downloads a model.** The embedding model has to be downloaded once, and my build environment blocked that download. I tested with a small stand-in embedding (word hashing) so all 41 tests run offline, and I put checks against the real model into the in-app Self-test. Once deployed, I confirmed the real model on the live app: answers are grounded and the Self-test passes. The evaluator can re-run the Self-test in one click.
+**3. Testing a system that downloads a model.** The embedding model has to be downloaded once, and my build environment blocked that download. I tested with a small stand-in embedding (word hashing) so all 47 tests run offline, and I put checks against the real model into the in-app Self-test. Once deployed, I confirmed the real model on the live app: answers are grounded and the Self-test passes. The evaluator can re-run the Self-test in one click.
 
 **4. Spreadsheets in a text search.** CSV and Excel rows mean little as plain text. I turned each row into `column: value` pairs, grouped 20 rows per chunk, and kept the sheet name so the citation reads `Regions:1`.
 
@@ -301,7 +302,15 @@ Written in my own words, in the order I hit them.
 
 **15. "Not found" from a local model that had the answer.** Ollama defaults to a 2,048-token window. My prompt (instructions plus ten retrieved chunks) was longer, so the model silently lost the start of it and answered "Not found". I now ask Ollama for an 8,192-token window (`OLLAMA_NUM_CTX`) and send only the top five chunks. A unit test checks the request carries the larger window.
 
-**16. Visitors do not phrase questions like the documents.** "What does the coaching cost and is it available in the UAE?" returned "Not found" on a real Ollama run, and exact-wording matching would fail on typos and slang for the same reason. I added a query-understanding step in the Planner (typo repair, paraphrase to STRENTOR terms, an extra rewritten search query) and "Did you mean" suggestions when nothing matches. Five new test checks cover it, including a question whose premise is wrong ("what are corporate modules": corporate programmes have no fixed modules). Measured limit: on 37 differently-worded questions not used for tuning (`scripts/eval_questions.py`), offline extractive mode answers 28 correctly (76%), and all three off-topic questions are refused. Free paraphrase ("can I do it on my own schedule") is where it still fails, because extractive mode selects sentences by words; a generative backend (Ollama or Claude) is what handles open wording, and the same script can be run against it. The mapping is also a hand-written glossary for this business, so a new product needs new entries; with an LLM backend the Planner also rewrites the question itself.
+**16. Visitors do not phrase questions like the documents.** "What does the coaching cost and is it available in the UAE?" returned "Not found" on a real Ollama run, and exact-wording matching would fail on typos and slang for the same reason. I added a query-understanding step in the Planner (typo repair, paraphrase to STRENTOR terms, an extra rewritten search query) and "Did you mean" suggestions when nothing matches. Five new test checks cover it, including a question whose premise is wrong ("what are corporate modules": corporate programmes have no fixed modules). Measured limit: on 37 differently-worded questions not used for tuning (`scripts/eval_questions.py`), offline extractive mode answers 27 correctly (73%), and all three off-topic questions are refused. Free paraphrase ("can I do it on my own schedule") is where it still fails, because extractive mode selects sentences by words; a generative backend (Ollama or Claude) is what handles open wording, and the same script can be run against it. The mapping is also a hand-written glossary for this business, so a new product needs new entries; with an LLM backend the Planner also rewrites the question itself.
+
+**17. A corrupted model cache on the live app.** The deployed app showed "Could not load the public knowledge base ... INVALID_PROTOBUF". The embedding model had been cached from a half-finished download, so every start failed on the same broken file. The app now recognises that error, deletes the cached model, downloads it again and retries once; any other error is still raised. Two unit tests cover the repair and that other errors are not swallowed.
+
+**18. A hosted model that is slow or rejects requests must not hang the app.** After switching to a hosted model the Self-test ran for minutes: each agent retried a failing call three times with waits. A rejected request (bad key, unknown model) is now not retried, one failed call pauses the model for two minutes so every agent falls back to extractive mode at once, and the Validator checks extractive answers word for word. Two tests cover it, including a Self-test that must finish in under 20 seconds with the model down.
+
+**19. "Tell me about corporate program" gave a thin answer.** The visitor's spelling ("program") differs from the site's ("programme"), and "corporate" was missing from the word map, so the search pulled generic Flagship text and the site's own description of the corporate service was left out. Spellings are now unified (programme = program, organisation = organization), "corporate" maps to the corporate service, and a generic Flagship term is no longer added when a specific offer is named. A test checks both spellings. Re-measuring after this change gives 27 of 37 on the held-out set (one answer that had matched by luck is now an honest refusal).
+
+**20. A silent fallback hid a failing model.** On the live app the sidebar said Gemini, yet answers looked like extractive bullets. The model call was failing and the safe fallback (see 18) was working so quietly that nothing showed it. The trace now records `answer_mode` (generated, extractive, or extractive-fallback) and `llm_error` with the provider's own message, and team mode shows a warning above the answer. A test checks that a fallback is reported. Related change: re-ingesting a file replaces its old chunks, so an old persisted index cannot leave stale text behind. (I also tried splitting the knowledge base by topic; it scored lower on the held-out set, so I reverted it.)
 
 ## 15. Requirement coverage
 
@@ -325,4 +334,4 @@ All ten capstone tasks are mapped to files and one-minute checks in [`TASK_MAP.m
 
 **What would you improve first?** Connect a real language model and move leads to a database.
 
-**How do you know it works?** 41 automated tests, a 14-check live self-test, and a manual question script, all runnable by the marker in minutes.
+**How do you know it works?** 47 automated tests, a 14-check live self-test, and a manual question script, all runnable by the marker in minutes.

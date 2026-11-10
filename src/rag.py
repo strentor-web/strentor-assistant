@@ -12,7 +12,7 @@ log = logging.getLogger("strentor")
 NOT_FOUND = "Not found in the uploaded documents."
 
 _STOP = set("the a an of to in and or is are was were for on with by at from as that this it be "
-            "what which who how many much do does did can will".split())
+            "what which who how many much do does did can will tell me about give explain describe please i you your".split())
 
 
 def ollama_up() -> bool:
@@ -69,6 +69,14 @@ def _openai_compat(system: str, user: str, max_tokens: int) -> str:
         return json.loads(r.read())["choices"][0]["message"]["content"].strip()
 
 
+status = {"error": "", "fallback": False}  # what happened on the model during the current question
+_last_error = ""
+
+
+def reset_status() -> None:
+    status["error"], status["fallback"] = "", False
+
+
 _llm_down_until = 0.0  # circuit breaker: after a failed call, skip the model briefly so nothing hangs
 LLM_COOLDOWN_S = 120
 
@@ -82,13 +90,14 @@ def llm(system: str, user: str, max_tokens: int = 1024) -> str:
     """LLM call with retry. Not used in extractive mode.
     Fails fast: a rejected request (bad key, unknown model) is not retried, and after one failed call the
     model is skipped for LLM_COOLDOWN_S so every agent falls back to extractive mode instead of waiting."""
-    global _llm_down_until
+    global _llm_down_until, _last_error
     p = provider()
     fn = {"ollama": _ollama, "anthropic": _anthropic}.get(p) or (_openai_compat if p in config.OPENAI_COMPAT else None)
     if fn is None:
         raise RuntimeError("No LLM available (extractive mode).")
     if time.time() < _llm_down_until:
-        raise RuntimeError(f"LLM temporarily skipped after a recent failure ({p})")
+        status["error"] = _last_error
+        raise RuntimeError(f"LLM temporarily skipped after a recent failure ({p}): {_last_error}")
     last = None
     for attempt in range(3):
         try:
@@ -104,7 +113,15 @@ def llm(system: str, user: str, max_tokens: int = 1024) -> str:
             last = e
             time.sleep(2 ** attempt)
     _llm_down_until = time.time() + LLM_COOLDOWN_S
-    raise RuntimeError(f"LLM call failed ({p}): {last}")
+    detail = str(last)
+    if isinstance(last, urllib.error.HTTPError):  # include the provider's own explanation (bad key, unknown model...)
+        try:
+            detail = f"HTTP {last.code} {last.reason}: {last.read().decode('utf-8', 'replace')[:200]}"
+        except Exception:
+            detail = f"HTTP {last.code} {last.reason}"
+    _last_error = f"{p}: {detail}"
+    status["error"] = _last_error
+    raise RuntimeError(f"LLM call failed ({_last_error})")
 
 
 BASE_SYSTEM = (
@@ -152,8 +169,16 @@ _EXPAND = {
 _IGNORE_IN_QUESTION = {"strentor"}  # in nearly every sentence, so it says nothing about relevance
 
 
+_UK_US = (("programme", "program"), ("organisation", "organization"), ("personalis", "personaliz"),
+          ("recognis", "recogniz"), ("centre", "center"), ("behaviour", "behavior"), ("favour", "favor"))
+
+
 def _words(s: str) -> set[str]:
-    return {_stem(w) for w in re.findall(r"[a-z0-9]+", s.lower()) if w not in _STOP and len(w) > 1}
+    """Content words, stemmed, with British/American spellings unified (programme = program)."""
+    low = s.lower()
+    for uk, us in _UK_US:
+        low = low.replace(uk, us)
+    return {_stem(w) for w in re.findall(r"[a-z0-9]+", low) if w not in _STOP and len(w) > 1}
 
 
 def _question_words(question: str) -> set[str]:
@@ -237,4 +262,5 @@ def answer_from_chunks(question: str, chunks: list[dict], audience: str = "clien
                    f"Context:\n{format_context(chunks[: config.TOP_K])}\n\nQuestion: {question}")
     except RuntimeError:  # quota exhausted, key revoked, network down: degrade to cited extractive answer
         log.warning("LLM unavailable; answering in extractive mode")
+        status["fallback"] = True
         return extractive_answer(question, chunks)

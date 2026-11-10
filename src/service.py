@@ -11,14 +11,14 @@ log = logging.getLogger("strentor")
 
 def ingest_file(path: Path, visibility: str = "internal") -> int:
     records = ingestion.load_file(path)
-    n = vectorstore.add_chunks(ingestion.chunk_records(records), visibility)
+    n = vectorstore.replace_source(ingestion.chunk_records(records), visibility)
     log.info("ingested %s (%s): %d chunks", path.name, visibility, n)
     return n
 
 
 def ingest_url(url: str, visibility: str = "public") -> int:
     records = ingestion.load_url(url)
-    n = vectorstore.add_chunks(ingestion.chunk_records(records), visibility)
+    n = vectorstore.replace_source(ingestion.chunk_records(records), visibility)
     log.info("ingested url %s (%s): %d chunks", url, visibility, n)
     return n
 

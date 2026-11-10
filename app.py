@@ -168,6 +168,9 @@ with tabs[0]:
                     if st.button(s_text, key=f"sugg_{mi}_{si}", use_container_width=True):
                         st.session_state.pending = s_text
                         st.rerun()
+            if m.get("trace") and team and m["trace"].get("llm_error"):
+                st.warning("The language-model call failed, so this answer used the offline extractive mode. "
+                           f"Reason: {m['trace']['llm_error']}")
             if m.get("trace") and team:
                 with st.expander("Agent trace (plan, tool calls, timings, validation)"):
                     st.json(m["trace"])

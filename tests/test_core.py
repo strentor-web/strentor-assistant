@@ -271,8 +271,8 @@ class TestOpenAICompatibleBackend(unittest.TestCase):
         import json, threading
         from http.server import BaseHTTPRequestHandler, HTTPServer
         from src import rag
+        rag.reset_llm_breaker()
         seen = {}
-
         class H(BaseHTTPRequestHandler):
             def do_POST(self):
                 seen["path"], seen["auth"] = self.path, self.headers.get("Authorization")
@@ -300,6 +300,7 @@ class TestOpenAICompatibleBackend(unittest.TestCase):
 
     def test_llm_failure_degrades_to_cited_extractive_answer(self):
         from src import rag
+        rag.reset_llm_breaker()
         old = (config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, rag.time.sleep)
         config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL = "groq", "bad", "http://127.0.0.1:9/v1"
         rag.time.sleep = lambda s: None
@@ -309,3 +310,110 @@ class TestOpenAICompatibleBackend(unittest.TestCase):
             config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, rag.time.sleep = old
         self.assertIn("12 weeks", r["answer"])
         self.assertTrue(r["sources"])
+        self.assertTrue(r["trace"]["answer_mode"].startswith("extractive-fallback"))  # the fallback is visible, not silent
+        self.assertIn("groq", r["trace"]["llm_error"])
+        rag.reset_llm_breaker()
+
+
+class TestCorruptModelCache(unittest.TestCase):
+    def test_corrupt_onnx_model_is_repaired_and_upsert_retried(self):
+        from src import vectorstore as vs
+        calls, repaired = [], []
+        real_upsert, real_repair, real_col = vs._col.upsert, vs._repair_model_cache, vs._col
+
+        class Col:
+            def upsert(self, **kw):
+                calls.append(1)
+                if len(calls) == 1:
+                    raise RuntimeError("[ONNXRuntimeError] : 7 : INVALID_PROTOBUF : Load model failed")
+                return real_upsert(**kw)
+
+        vs._col, vs._repair_model_cache = Col(), lambda: repaired.append(1)
+        try:
+            n = vs.add_chunks([{"source": "t.txt", "page": 1, "text": "repair test"}], "internal")
+        finally:
+            vs._col, vs._repair_model_cache = real_col, real_repair
+        self.assertEqual((n, len(calls), len(repaired)), (1, 2, 1))
+
+    def test_other_errors_are_not_swallowed(self):
+        from src import vectorstore as vs
+        real_col = vs._col
+
+        class Col:
+            def upsert(self, **kw):
+                raise RuntimeError("disk full")
+
+        vs._col = Col()
+        try:
+            with self.assertRaises(RuntimeError):
+                vs.add_chunks([{"source": "t.txt", "page": 1, "text": "x"}], "internal")
+        finally:
+            vs._col = real_col
+
+
+class TestLLMFailsFast(unittest.TestCase):
+    def setUp(self):
+        from src import rag
+        rag.reset_llm_breaker()
+        self.old = (config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, rag.time.sleep)
+        rag.time.sleep = lambda s: None
+
+    def tearDown(self):
+        from src import rag
+        config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL, rag.time.sleep = self.old
+        rag.reset_llm_breaker()
+
+    def test_rejected_key_is_not_retried_and_trips_the_breaker(self):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from src import rag
+        hits = []
+
+        class H(BaseHTTPRequestHandler):
+            def do_POST(self):
+                hits.append(1)
+                self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        srv = HTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL = "gemini", "bad", f"http://127.0.0.1:{srv.server_port}"
+        try:
+            with self.assertRaises(RuntimeError):
+                rag.llm("s", "u")
+            self.assertEqual(len(hits), 1)          # 401: one request, no retries
+            with self.assertRaises(RuntimeError):
+                rag.llm("s", "u")
+            self.assertEqual(len(hits), 1)          # breaker open: no new request at all
+        finally:
+            srv.shutdown()
+
+    def test_self_test_still_finishes_when_the_model_is_down(self):
+        from src import selftest
+        config.LLM_PROVIDER, config.LLM_API_KEY, config.LLM_BASE_URL = "gemini", "bad", "http://127.0.0.1:9"
+        import time as _t
+        t0 = _t.time()
+        rows = selftest.run_checks()
+        self.assertLess(_t.time() - t0, 20)
+        self.assertEqual(sum(r["result"] == "PASS" for r in rows), 14)
+
+
+class TestCorporateOverview(unittest.TestCase):
+    def test_tell_me_about_corporate_program_includes_the_site_description(self):
+        for q in ("tell me about corporate program", "tell me about the corporate programme"):
+            r = service.ask(q, "client")
+            self.assertIn("NGOs and CSR partners", r["answer"], q)       # the public-site description
+            self.assertNotIn("Assessment", r["answer"], q)               # no unrelated offer text
+            self.assertNotIn("Flagship", r["answer"], q)
+
+
+class TestReingestReplacesStaleContent(unittest.TestCase):
+    def test_reingesting_a_source_drops_its_old_chunks(self):
+        from src import vectorstore as vs
+        vs.replace_source([{"source": "stale_test.txt", "page": "1", "text": "old pricing text version one"}], "public")
+        vs.replace_source([{"source": "stale_test.txt", "page": "1", "text": "new pricing text version two"}], "public")
+        texts = vs._col.get(where={"source": "stale_test.txt"})["documents"]
+        self.assertEqual(texts, ["new pricing text version two"])
+        vs._col.delete(where={"source": "stale_test.txt"})

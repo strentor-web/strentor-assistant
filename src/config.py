@@ -26,7 +26,7 @@ LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-5-5")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "")
 OPENAI_COMPAT = {  # provider -> (base URL, default model); override the model with LLM_MODEL
-    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-flash-latest"),
+    "gemini": ("https://generativelanguage.googleapis.com/v1beta/openai", "gemini-3.8-flash"),
     "groq": ("https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
     "openai": ("", ""),
 }

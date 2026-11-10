@@ -2,7 +2,7 @@
 
 Run:  python scripts/eval_questions.py        (uses whatever backend .env selects: extractive, Ollama or Claude)
 Each question has expected keywords; the 3 off-topic questions must be refused.
-Offline extractive mode scores about 76% (28/37); a generative backend is what handles free paraphrase.
+Offline extractive mode scores about 73% (27/37); a generative backend is what handles free paraphrase.
 """
 import sys
 from pathlib import Path

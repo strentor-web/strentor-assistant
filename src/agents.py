@@ -17,7 +17,8 @@ import re
 import time
 from . import config, vectorstore, query_understanding as qu
 from .guardrails import is_medical, MEDICAL_REDIRECT, sanitize_context
-from .rag import llm, answer_from_chunks, provider, _words
+from . import rag
+from .rag import llm, answer_from_chunks, provider, _words, reset_status as rag_status_reset
 
 _LEAD_INTENT = re.compile(r"(price|pricing|cost|fee|join|enrol|enroll|sign up|start|book|call|corporate|csr|partner)", re.I)
 LEAD_CTA = "Want Aditya to reach out? Leave your details in the sidebar form."
@@ -169,6 +170,7 @@ def run(question: str, audience: str = "client") -> dict:
         trace["route"] = "medical-redirect"
         return {"answer": MEDICAL_REDIRECT, "sources": [], "trace": trace, "cta": None}
     trace["route"] = "rag"
+    rag_status_reset()
     subs = timed("plan", planner, question)
     trace["plan"] = subs
     trace["understood"] = {k: v for k, v in qu.understand(question).items() if k in ("corrected", "terms")}
@@ -196,5 +198,9 @@ def run(question: str, audience: str = "client") -> dict:
     suggestions = []
     if answer.startswith(("I don't have that", "Not found", "I could not")):
         suggestions = qu.suggest(question)  # help the visitor re-ask in words the KB answers
+    trace["answer_mode"] = ("extractive-fallback (model call failed)" if rag.status["fallback"]
+                            else "extractive" if provider() == "extractive" else "generated")
+    if rag.status["error"]:
+        trace["llm_error"] = rag.status["error"]
     trace["total_ms"] = round((time.perf_counter() - t0) * 1000)
     return {"answer": answer, "sources": sources, "trace": trace, "cta": cta, "suggestions": suggestions}

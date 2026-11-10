@@ -29,6 +29,23 @@ def set_embedding_function(ef) -> None:
     _col = _make_col()
 
 
+def _chunk_id(c: dict) -> str:
+    return hashlib.md5(f"{c['source']}|{c['page']}|{c['text']}".encode()).hexdigest()
+
+
+def replace_source(chunks: list[dict], visibility: str = "internal") -> int:
+    """Index chunks, then drop any older chunks of the same source(s). Re-ingesting an edited file or page
+    therefore replaces its content instead of leaving stale text behind (e.g. a persisted index from an old version).
+    The new chunks are stored first, so a failure while embedding never loses the existing content."""
+    n = add_chunks(chunks, visibility)
+    new_ids = {_chunk_id(c) for c in chunks}
+    for source in {c["source"] for c in chunks}:
+        stale = [i for i in _col.get(where={"source": source})["ids"] if i not in new_ids]
+        if stale:
+            _col.delete(ids=stale)
+    return n
+
+
 def _is_model_corruption(e: Exception) -> bool:
     s = str(e)
     return "INVALID_PROTOBUF" in s or "Protobuf parsing failed" in s or "onnx" in s.lower() and "load model" in s.lower()
@@ -50,7 +67,7 @@ def _repair_model_cache() -> None:
 
 def add_chunks(chunks: list[dict], visibility: str = "internal") -> int:
     """visibility: 'public' (client-safe) or 'internal' (team only)."""
-    ids = [hashlib.md5(f"{c['source']}|{c['page']}|{c['text']}".encode()).hexdigest() for c in chunks]
+    ids = [_chunk_id(c) for c in chunks]
     kwargs = dict(
         ids=ids,
         documents=[c["text"] for c in chunks],

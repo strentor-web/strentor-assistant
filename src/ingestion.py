@@ -67,24 +67,30 @@ def _df_to_records(df: pd.DataFrame, name: str, sheet: str) -> list[dict]:
             for i in range(0, len(rows), 20)]
 
 
+def _split_long(text: str, source: str, page: str) -> list[dict]:
+    """Hard-split one long block: sentence > hard cut, with overlap."""
+    size, overlap = config.CHUNK_SIZE, config.CHUNK_OVERLAP
+    out, start = [], 0
+    while start < len(text):
+        end = min(start + size, len(text))
+        if end < len(text):
+            cut = max(text.rfind("\n\n", start, end), text.rfind(". ", start, end))
+            if cut > start + size // 2:
+                end = cut + 1
+        piece = text[start:end].strip()
+        if piece:
+            out.append({"text": piece, "source": source, "page": page})
+        if end >= len(text):
+            break
+        start = max(end - overlap, start + 1)
+    return out
+
+
 def chunk_records(records: list[dict]) -> list[dict]:
     """Recursive-style splitter: paragraph > sentence > hard cut, with overlap."""
-    size, overlap = config.CHUNK_SIZE, config.CHUNK_OVERLAP
     out = []
     for r in records:
-        text, start = r["text"], 0
-        while start < len(text):
-            end = min(start + size, len(text))
-            if end < len(text):
-                cut = max(text.rfind("\n\n", start, end), text.rfind(". ", start, end))
-                if cut > start + size // 2:
-                    end = cut + 1
-            piece = text[start:end].strip()
-            if piece:
-                out.append({"text": piece, "source": r["source"], "page": str(r["page"])})
-            if end >= len(text):
-                break
-            start = max(end - overlap, start + 1)
+        out.extend(_split_long(r["text"], r["source"], str(r["page"])))
     return out
 
 

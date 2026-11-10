@@ -39,12 +39,12 @@ Generated (LLM) answers are optional. Evidence from a real Ollama run is in `doc
 7. **Talk to Aditya** form (bottom of the sidebar): submit a test lead, then see it in the **Leads** tab and `leads/leads.csv`.
 8. **Evaluator guide tab**: architecture diagram and task map.
 
-Run the 45 automated tests (offline, about ten seconds): `python -m unittest discover -s tests -v`
+Run the 47 automated tests (offline, about ten seconds): `python -m unittest discover -s tests -v`
 
 ## Demo and verification
 
 - **2.5-minute narrated screen demo (recorded in extractive mode; generated answers from a real local Ollama run are in `docs/screenshots/`):** [`docs/demo.mp4`](docs/demo.mp4) walks through client mode, guardrails, team mode, sample files, agent trace, self-test and the lead form. It was recorded in the offline test setup (extractive mode, stand-in embeddings), so wording of answers will differ slightly from a fresh run with the real embedding model.
-- **Tests:** on 9 Nov 2026, all 45 automated tests passed on Python 3.9.25 and on Python 3.13 (command below), and the 14 live checks of the in-app Self-test tab passed (offline stand-in embeddings). Please also run the Self-test tab once on your machine; it exercises the real embedding model.
+- **Tests:** on 9 Nov 2026, all 47 automated tests passed on Python 3.9.25 and on Python 3.13 (command below), and the 14 live checks of the in-app Self-test tab passed (offline stand-in embeddings). Please also run the Self-test tab once on your machine; it exercises the real embedding model.
 
 ## Documentation
 
