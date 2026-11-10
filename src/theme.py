@@ -69,13 +69,17 @@ a { color: var(--gold); }
 
 /* buttons: outlined pills for actions, plain hairline rows for the example questions */
 .stButton > button, .stDownloadButton > button {
-  border-radius: 9999px; border: 1px solid #3A3A3A; background: transparent; color: var(--bone); font-weight: 600;
+  border-radius: 9999px; border: 1px solid var(--gold-dim); background: transparent; color: var(--bone); font-weight: 600;
 }
 .stButton > button:hover, .stDownloadButton > button:hover { border-color: var(--gold); color: var(--gold); background: transparent; }
 .stFormSubmitButton > button, .stButton > button[kind="primary"] {
   background: var(--gold); color: #0A0A0A; border: 1px solid var(--gold); border-radius: 9999px; font-weight: 700;
 }
 .stFormSubmitButton > button:hover { background: #D8AE68; color: #0A0A0A; }
+/* the label sits in a <p> that other rules colour (sidebar, markdown): force dark ink on every gold button */
+.stFormSubmitButton > button p, .stFormSubmitButton > button span, .stFormSubmitButton > button div,
+.stButton > button[kind="primary"] p, .stButton > button[kind="primary"] span,
+[data-testid="stSidebar"] .stFormSubmitButton > button p { color: #0A0A0A !important; }
 [class*="st-key-ex"] button {
   border: 0; border-bottom: 1px solid var(--line); border-radius: 0; justify-content: flex-start; text-align: left;
   padding: 0.9rem 0.1rem 0.5rem 0.1rem; font-size: 1rem; font-weight: 600; min-height: 0;
@@ -94,7 +98,7 @@ a { color: var(--gold); }
 .sources { margin-top: 0.7rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; }
 .sources .label { color: var(--muted); font-size: 0.8rem; margin-right: 0.2rem; }
 .sources .chip { border: 1px solid var(--gold-dim); color: var(--gold); border-radius: 6px; padding: 0.08rem 0.55rem; font-size: 0.8rem; }
-[data-testid="stChatInput"] { border: 1px solid #3A3A3A; border-radius: 12px; background: var(--panel); }
+[data-testid="stChatInput"] { border: 1px solid #6B6B6B; border-radius: 12px; background: var(--panel); }
 [data-testid="stChatInput"]:focus-within { border-color: var(--gold); }
 
 /* tabs, forms, inputs, expanders */
@@ -102,8 +106,16 @@ a { color: var(--gold); }
 .stTabs [data-baseweb="tab"] { font-weight: 600; }
 [data-baseweb="tab-highlight"] { background-color: var(--gold) !important; }
 .stTabs [aria-selected="true"] { color: var(--gold) !important; }
-[data-testid="stForm"] { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
-[data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"] > div { background: var(--ink); border-color: #333333; }
+[data-testid="stForm"] { border: 1px solid #3A3A3A; border-radius: 10px; background: var(--panel); }
+[data-baseweb="input"], [data-baseweb="textarea"], [data-baseweb="select"] > div { background: var(--ink); border-color: #6B6B6B; }
+[data-baseweb="input"]:focus-within, [data-baseweb="textarea"]:focus-within, [data-baseweb="select"] > div:focus-within { border-color: var(--gold); }
+input::placeholder, textarea::placeholder { color: #9A9A9A; opacity: 1; }
+[data-baseweb="checkbox"] > span:first-child { border-color: #8A8A8A; }
+/* chat send arrow: gold when there is something to send, clearly muted when not */
+[data-testid="stChatInputSubmitButton"] { border-radius: 8px; }
+[data-testid="stChatInputSubmitButton"]:not(:disabled) { background: var(--gold); color: #0A0A0A; }
+[data-testid="stChatInputSubmitButton"]:not(:disabled) svg { fill: #0A0A0A; color: #0A0A0A; }
+[data-testid="stChatInputSubmitButton"]:disabled { background: #262626; color: #8A8A8A; }
 [data-testid="stExpander"] { border: 1px solid var(--line); border-radius: 10px; background: transparent; }
 </style>
 """
